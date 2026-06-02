@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "memory-sync"
+version = "0.1.0"
+description = "Stateful Hedgehog — company brain: KG + RAG + Mem0 for Claude Code"
+requires-python = ">=3.11"
+dependencies = [
+    "mem0ai>=0.1.0",
+    "kuzu>=0.6.0",
+    "mcp>=1.0.0",
+    "pyyaml>=6.0",
+    "tiktoken>=0.7.0",
+    "pypdf>=4.0.0",
+    "python-frontmatter>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+brain = "brain.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["brain*"]
