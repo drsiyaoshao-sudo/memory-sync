@@ -5,6 +5,68 @@ Zero context pollution: agents query what they need, nothing is auto-injected.
 
 ---
 
+## Brain Workflow
+
+```mermaid
+flowchart TD
+    subgraph SESSION_START["Session Start (UserPromptSubmit)"]
+        A([Claude Code opens in any repo]) --> B[reconcile.py]
+        B --> B1{Syncthing conflicts\nin ~/.brain/raw/?}
+        B1 -->|yes| B2[Timestamp wins\nLoser → archive/]
+        B1 -->|no| B3{raw/ changed\nsince last run?}
+        B2 --> B3
+        B3 -->|yes| B4[Rebuild KG + Mem0\nindexes from raw/]
+        B3 -->|no| B5[Skip rebuild\n< 5ms]
+        B4 --> C[bootstrap.py]
+        B5 --> C
+        C --> C1["Inject 1-line briefing:\n[BRAIN] Mac arm64 | gait_device | tools..."]
+    end
+
+    subgraph AGENT["Agent Session (gated access)"]
+        C1 --> D[Agent receives briefing]
+        D --> E{Needs context?}
+        E -->|project state| F[brain_project_context\n→ .brain/context.md]
+        E -->|facts/decisions| G[brain_mem\n→ Mem0 search]
+        E -->|doc content| H[brain_query\n→ RAG chunks]
+        E -->|relationships| I[brain_graph\n→ KG traversal]
+        F & G & H & I --> J[Agent works with\nrelevant knowledge only]
+        J --> K{New decision\nor fact?}
+        K -->|yes| L[brain_remember\n→ Mem0 + agent_id scope]
+        K -->|no| M([Session ends])
+        L --> M
+    end
+
+    subgraph SESSION_END["Session End (Stop hook)"]
+        M --> N[flush.py — async]
+        N --> N1[Write .brain/context.md\n← repo scope]
+        N --> N2[Extract facts from\ntranscript → raw/]
+        N --> N3[Bump access_count\non active memories]
+    end
+
+    subgraph SYNC["Cross-Machine Sync (automatic)"]
+        N2 -->|file written| O[Syncthing detects\n~/.brain/raw/ change]
+        O --> P[Syncs to Linux\n~/.brain/raw/]
+        P --> Q[Next Linux session\n→ reconcile resolves\n→ indexes rebuilt]
+    end
+
+    subgraph SCOPES["Three Memory Scopes"]
+        direction LR
+        S1["🌐 Global\n~/.brain/raw/\nSyncthing-synced\nuser · feedback · decisions"]
+        S2["📁 Repo\n<repo>/.brain/\ngitignored · local\nproject state · docs"]
+        S3["💻 Machine\n<repo>/.brain/machine/\ngitignored · local\ntool paths · env"]
+    end
+
+    subgraph STORAGE["Storage Layers"]
+        direction LR
+        T1["KG\nNetworkX\nEntities +\nRelationships"]
+        T2["RAG\nMem0 + ChromaDB\nOllama embeddings\nDoc chunks"]
+        T3["Facts\nMem0 + Haiku\nShort-form\nfacts"]
+        T4["Raw\nMarkdown\nSource of truth\nSyncthing transport"]
+    end
+```
+
+---
+
 ## For Human Engineers
 
 ### What this does
