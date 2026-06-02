@@ -12,6 +12,7 @@ Direct invocations (via pyproject.toml [project.scripts]):
   brain flush
   brain probe
   brain mcp
+  brain health
 """
 
 import sys
@@ -19,7 +20,7 @@ import sys
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: brain <reconcile|bootstrap|flush|probe|mcp>")
+        print("Usage: brain <reconcile|bootstrap|flush|probe|mcp|health>")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -44,6 +45,9 @@ def main() -> None:
     elif cmd == "mcp":
         from .mcp_server import run as mcp_run
         mcp_run()
+    elif cmd == "health":
+        from .healthcheck import main as health_main
+        health_main(rest)
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)
