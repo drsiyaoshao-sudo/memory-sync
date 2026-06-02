@@ -33,10 +33,9 @@ MEM0_CONFIG = {
         },
     },
     "llm": {
-        "provider": "ollama",
+        "provider": "anthropic",
         "config": {
-            "model": "qwen2.5:0.5b",
-            "ollama_base_url": "http://localhost:11434",
+            "model": "claude-haiku-4-5-20251001",
             "temperature": 0,
             "max_tokens": 2000,
         },

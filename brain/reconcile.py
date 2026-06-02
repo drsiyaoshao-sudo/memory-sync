@@ -147,7 +147,7 @@ def _index_machine_profile(path: pathlib.Path) -> None:
 
 
 def _index_memory_file(path: pathlib.Path) -> None:
-    from . import mem as mem_mod, rag
+    from . import mem as mem_mod, rag, kg
 
     try:
         post = frontmatter.load(str(path))
@@ -156,21 +156,40 @@ def _index_memory_file(path: pathlib.Path) -> None:
         if status == "archived":
             return
         mem_type = meta.get("type", "project")
+        name = post.metadata.get("name", path.stem)
+        description = post.metadata.get("description", "")
         content = str(post.content).strip()
-        if not content:
+        updated = meta.get("updated", "")
+        if not content and not description:
             return
-        agent_id = f"global" if mem_type in ("user", "feedback") else f"project:{meta.get('originSessionId', 'unknown')}"
+
+        # Add to KG
+        kg.upsert_node(
+            f"memory:{name}",
+            type="Memory",
+            name=name,
+            description=description,
+            mem_type=mem_type,
+            updated=updated,
+            file=path.name,
+        )
+
+        # Add to Mem0 facts
+        combined = f"{description} {content}"[:2000].strip()
         mem_mod.remember(
-            content=f"{post.metadata.get('description', '')} {content}"[:2000],
+            content=combined,
             agent_id="global",
-            metadata={"name": post.metadata.get("name", path.stem), "type": mem_type, "file": path.name},
+            metadata={"name": name, "type": mem_type, "file": path.name},
         )
-        rag.index_document(
-            text=content,
-            doc_name=post.metadata.get("name", path.stem),
-            source_path=str(path),
-            scope="global",
-        )
+
+        # Add to RAG vector store
+        if content:
+            rag.index_document(
+                text=content,
+                doc_name=name,
+                source_path=str(path),
+                scope="global",
+            )
     except Exception:
         pass
 
