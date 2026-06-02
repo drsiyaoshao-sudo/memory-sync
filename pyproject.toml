@@ -9,7 +9,7 @@ description = "Stateful Hedgehog — company brain: KG + RAG + Mem0 for Claude C
 requires-python = ">=3.11"
 dependencies = [
     "mem0ai>=0.1.0",
-    "kuzu>=0.6.0",
+    "networkx>=3.0",
     "mcp>=1.0.0",
     "pyyaml>=6.0",
     "tiktoken>=0.7.0",

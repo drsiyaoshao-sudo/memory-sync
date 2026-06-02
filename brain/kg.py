@@ -1,145 +1,220 @@
-"""Knowledge graph layer using Kuzu embedded graph DB.
+"""Knowledge graph layer using NetworkX (pure Python, JSON-persisted).
 
-Schema:
-  Node types: Machine, Project, Tool, Concept, Person, Decision, Document
-  Edge types: RUNS_ON, USES, DEPENDS_ON, CREATED_BY, CONFLICTS_WITH, SUPERSEDES, BELONGS_TO, INDEXED_IN
+Graph file: ~/.brain/kg/graph.json (node-link format, auto-saved on write).
+
+Node types: Machine, Project, Tool, Document, Concept, Decision
+Edge types: RUNS_ON, USES, DEPENDS_ON, BELONGS_TO, SUPERSEDES, RELATED_TO
 """
 
+from __future__ import annotations
+
+import json
 import pathlib
 from typing import Any
 
-import kuzu
+import networkx as nx
 
 from .config import GLOBAL_KG, ensure_dirs
 
-_SCHEMA = """
-CREATE NODE TABLE IF NOT EXISTS Machine(
-    name STRING, tag STRING, os STRING, description STRING,
-    updated STRING, PRIMARY KEY(name)
-);
-CREATE NODE TABLE IF NOT EXISTS Project(
-    name STRING, path STRING, description STRING,
-    updated STRING, PRIMARY KEY(name)
-);
-CREATE NODE TABLE IF NOT EXISTS Tool(
-    name STRING, version STRING, machine STRING,
-    PRIMARY KEY(name)
-);
-CREATE NODE TABLE IF NOT EXISTS Document(
-    name STRING, path STRING, scope STRING, chunks INT,
-    summary STRING, updated STRING, PRIMARY KEY(name)
-);
-CREATE NODE TABLE IF NOT EXISTS Concept(
-    name STRING, description STRING, updated STRING,
-    PRIMARY KEY(name)
-);
-CREATE NODE TABLE IF NOT EXISTS Decision(
-    name STRING, summary STRING, scope STRING, updated STRING,
-    PRIMARY KEY(name)
-);
-CREATE REL TABLE IF NOT EXISTS RUNS_ON(FROM Project TO Machine);
-CREATE REL TABLE IF NOT EXISTS USES(FROM Project TO Tool);
-CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM Project TO Project);
-CREATE REL TABLE IF NOT EXISTS BELONGS_TO(FROM Document TO Project);
-CREATE REL TABLE IF NOT EXISTS BELONGS_TO_MACHINE(FROM Document TO Machine);
-CREATE REL TABLE IF NOT EXISTS SUPERSEDES(FROM Decision TO Decision);
-CREATE REL TABLE IF NOT EXISTS RELATED_TO(FROM Concept TO Concept);
-"""
+_GRAPH_FILE: pathlib.Path | None = None
+_G: nx.DiGraph | None = None
 
 
-def _db_path() -> pathlib.Path:
+def _graph_path() -> pathlib.Path:
     ensure_dirs()
-    return GLOBAL_KG
+    return GLOBAL_KG / "graph.json"
 
 
-def _open() -> tuple[kuzu.Database, kuzu.Connection]:
-    db = kuzu.Database(str(_db_path()))
-    conn = kuzu.Connection(db)
-    return db, conn
+def _load() -> nx.DiGraph:
+    global _G, _GRAPH_FILE
+    path = _graph_path()
+    _GRAPH_FILE = path
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            _G = nx.node_link_graph(data, directed=True, multigraph=False)
+            return _G
+        except Exception:
+            pass
+    _G = nx.DiGraph()
+    return _G
+
+
+def _save(g: nx.DiGraph) -> None:
+    path = _graph_path()
+    path.write_text(json.dumps(nx.node_link_data(g), indent=2))
+
+
+def _g() -> nx.DiGraph:
+    global _G
+    if _G is None:
+        _load()
+    return _G
 
 
 def init() -> None:
-    db, conn = _open()
-    for stmt in _SCHEMA.strip().split(";"):
-        stmt = stmt.strip()
-        if stmt:
-            try:
-                conn.execute(stmt + ";")
-            except Exception:
-                pass  # table already exists
-    db.close()
+    _load()
+
+
+def upsert_node(node_id: str, **attrs) -> None:
+    g = _g()
+    if g.has_node(node_id):
+        g.nodes[node_id].update(attrs)
+    else:
+        g.add_node(node_id, **attrs)
+    _save(g)
+
+
+def upsert_edge(src: str, dst: str, rel: str, **attrs) -> None:
+    g = _g()
+    if not g.has_node(src):
+        g.add_node(src)
+    if not g.has_node(dst):
+        g.add_node(dst)
+    g.add_edge(src, dst, rel=rel, **attrs)
+    _save(g)
 
 
 def upsert_machine(name: str, tag: str, os_str: str, description: str, updated: str) -> None:
-    db, conn = _open()
-    conn.execute(
-        "MERGE (m:Machine {name: $name}) "
-        "SET m.tag = $tag, m.os = $os, m.description = $desc, m.updated = $updated",
-        {"name": name, "tag": tag, "os": os_str, "desc": description, "updated": updated},
-    )
-    db.close()
+    upsert_node(f"machine:{name}", type="Machine", name=name, tag=tag,
+                os=os_str, description=description, updated=updated)
 
 
 def upsert_project(name: str, path: str, description: str, updated: str) -> None:
-    db, conn = _open()
-    conn.execute(
-        "MERGE (p:Project {name: $name}) "
-        "SET p.path = $path, p.description = $desc, p.updated = $updated",
-        {"name": name, "path": path, "desc": description, "updated": updated},
-    )
-    db.close()
+    upsert_node(f"project:{name}", type="Project", name=name, path=path,
+                description=description, updated=updated)
 
 
 def link_project_machine(project_name: str, machine_name: str) -> None:
-    db, conn = _open()
-    conn.execute(
-        "MATCH (p:Project {name: $p}), (m:Machine {name: $m}) "
-        "MERGE (p)-[:RUNS_ON]->(m)",
-        {"p": project_name, "m": machine_name},
-    )
-    db.close()
+    upsert_edge(f"project:{project_name}", f"machine:{machine_name}", "RUNS_ON")
 
 
-def upsert_document(name: str, path: str, scope: str, chunks: int, summary: str, updated: str) -> None:
-    db, conn = _open()
-    conn.execute(
-        "MERGE (d:Document {name: $name}) "
-        "SET d.path = $path, d.scope = $scope, d.chunks = $chunks, "
-        "d.summary = $summary, d.updated = $updated",
-        {"name": name, "path": path, "scope": scope, "chunks": chunks,
-         "summary": summary, "updated": updated},
-    )
-    db.close()
+def upsert_document(name: str, path: str, scope: str, chunks: int,
+                    summary: str, updated: str) -> None:
+    upsert_node(f"doc:{name}", type="Document", name=name, path=path,
+                scope=scope, chunks=chunks, summary=summary, updated=updated)
 
 
 def query(cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-    db, conn = _open()
-    result = conn.execute(cypher, params or {})
-    rows = []
-    while result.has_next():
-        rows.append(result.get_next())
-    db.close()
-    return rows
+    """Simple pseudo-Cypher: 'MATCH (n:Type) RETURN n.field' style.
+
+    Full Cypher is not supported — this is a best-effort subset for common patterns.
+    For complex queries, call graph_neighbors() or graph_search() directly.
+    """
+    g = _g()
+    results = []
+
+    # Pattern: MATCH (n:Type {key: $param}) RETURN n.field
+    import re
+    m = re.search(r"MATCH\s+\((\w+):(\w+)(?:\s*\{([^}]+)\})?\)", cypher, re.IGNORECASE)
+    ret = re.search(r"RETURN\s+(.+)", cypher, re.IGNORECASE)
+
+    node_type = m.group(2) if m else None
+    return_expr = ret.group(1).strip() if ret else None
+
+    p = params or {}
+
+    for node_id, attrs in g.nodes(data=True):
+        if node_type and attrs.get("type", "").lower() != node_type.lower():
+            continue
+        if m and m.group(3):
+            conditions = m.group(3)
+            match = True
+            for cond in conditions.split(","):
+                cond = cond.strip()
+                if ":" in cond:
+                    k, v = cond.split(":", 1)
+                    k = k.strip().lstrip("$")
+                    v = v.strip().strip("\"'")
+                    if v.startswith("$"):
+                        v = str(p.get(v[1:], v))
+                    if str(attrs.get(k, "")) != v:
+                        match = False
+                        break
+            if not match:
+                continue
+
+        if return_expr:
+            row = {}
+            for expr in return_expr.split(","):
+                expr = expr.strip()
+                if "." in expr:
+                    _, field = expr.rsplit(".", 1)
+                    row[expr] = attrs.get(field)
+                else:
+                    row[expr] = attrs
+            results.append(row)
+        else:
+            results.append(dict(attrs))
+
+    return results
+
+
+def graph_neighbors(node_id: str, rel: str | None = None) -> list[dict]:
+    g = _g()
+    if not g.has_node(node_id):
+        return []
+    results = []
+    for src, dst, data in g.edges(node_id, data=True):
+        if rel and data.get("rel") != rel:
+            continue
+        target = dst if dst != node_id else src
+        results.append({"node": target, "rel": data.get("rel"), **g.nodes.get(target, {})})
+    return results
+
+
+def graph_search(query_str: str, node_type: str | None = None) -> list[dict]:
+    g = _g()
+    q = query_str.lower()
+    results = []
+    for node_id, attrs in g.nodes(data=True):
+        if node_type and attrs.get("type", "").lower() != node_type.lower():
+            continue
+        searchable = " ".join(str(v) for v in attrs.values()).lower()
+        if q in searchable:
+            results.append({"node_id": node_id, **attrs})
+    return results
 
 
 def projects_on_machine(machine_tag: str) -> list[str]:
-    rows = query(
-        "MATCH (p:Project)-[:RUNS_ON]->(m:Machine {tag: $tag}) RETURN p.name",
-        {"tag": machine_tag},
-    )
-    return [r[0] for r in rows]
+    g = _g()
+    projects = []
+    for node_id, attrs in g.nodes(data=True):
+        if attrs.get("type") == "Machine" and attrs.get("tag") == machine_tag:
+            for src, dst, data in g.in_edges(node_id, data=True):
+                if data.get("rel") == "RUNS_ON":
+                    src_attrs = g.nodes.get(src, {})
+                    if src_attrs.get("type") == "Project":
+                        projects.append(src_attrs.get("name", src))
+    return projects
 
 
 def documents_for_project(project_name: str) -> list[dict]:
-    rows = query(
-        "MATCH (d:Document)-[:BELONGS_TO]->(p:Project {name: $name}) "
-        "RETURN d.name, d.summary, d.scope",
-        {"name": project_name},
-    )
-    return [{"name": r[0], "summary": r[1], "scope": r[2]} for r in rows]
+    g = _g()
+    docs = []
+    proj_id = f"project:{project_name}"
+    for src, dst, data in g.edges(data=True):
+        if data.get("rel") == "BELONGS_TO" and dst == proj_id:
+            doc_attrs = g.nodes.get(src, {})
+            docs.append({"name": doc_attrs.get("name", src),
+                         "summary": doc_attrs.get("summary", ""),
+                         "scope": doc_attrs.get("scope", "")})
+    return docs
 
 
 def remove_document(name: str) -> None:
-    db, conn = _open()
-    conn.execute("MATCH (d:Document {name: $name}) DETACH DELETE d", {"name": name})
-    db.close()
+    g = _g()
+    node_id = f"doc:{name}"
+    if g.has_node(node_id):
+        g.remove_node(node_id)
+        _save(g)
+
+
+def all_nodes(node_type: str | None = None) -> list[dict]:
+    g = _g()
+    results = []
+    for node_id, attrs in g.nodes(data=True):
+        if node_type and attrs.get("type", "").lower() != node_type.lower():
+            continue
+        results.append({"node_id": node_id, **attrs})
+    return results

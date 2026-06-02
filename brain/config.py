@@ -25,6 +25,22 @@ MEM0_CONFIG = {
             "path": str(GLOBAL_VECTOR),
         },
     },
+    "embedder": {
+        "provider": "ollama",
+        "config": {
+            "model": "nomic-embed-text",
+            "ollama_base_url": "http://localhost:11434",
+        },
+    },
+    "llm": {
+        "provider": "ollama",
+        "config": {
+            "model": "qwen2.5:0.5b",
+            "ollama_base_url": "http://localhost:11434",
+            "temperature": 0,
+            "max_tokens": 2000,
+        },
+    },
     "history_db_path": str(BRAIN_DIR / "mem0_history.db"),
     "version": "v1.1",
 }
