@@ -20,7 +20,7 @@ import time
 
 import frontmatter  # python-frontmatter
 
-from .config import GLOBAL_ARCHIVE, GLOBAL_RAW, ensure_dirs
+from .config import GLOBAL_ARCHIVE, GLOBAL_RAW, PROBE_TTL_DAYS, ensure_dirs
 
 CONFLICT_RE = re.compile(
     r"^(.+)\.sync-conflict-(\d{8})-(\d{6})-([A-Z0-9]+)(\..+)$"
@@ -95,8 +95,8 @@ def resolve_conflicts() -> int:
         if not canonical.exists():
             conflict_file.rename(canonical)
         elif conflict_updated and canonical_updated and conflict_updated > canonical_updated:
+            _merge_machines(conflict_file, canonical)
             _archive(canonical, "_canonical_loser")
-            _merge_machines(conflict_file, None)
             conflict_file.rename(canonical)
         else:
             _merge_machines(canonical, conflict_file)
@@ -196,8 +196,6 @@ def _index_memory_file(path: pathlib.Path) -> None:
 
 def _probe_if_needed(hostname: str, cwd: str) -> bool:
     """Fire machine probe as background subprocess if profile is missing or stale."""
-    from .config import GLOBAL_RAW, PROBE_TTL_DAYS
-
     profile = GLOBAL_RAW / f"machine_{hostname}.md"
     needs_probe = not profile.exists()
     if not needs_probe and profile.exists():

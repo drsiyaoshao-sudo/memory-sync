@@ -17,32 +17,52 @@ ACCESS_COUNT_PROTECTED = 10
 
 PROTECTED_TYPES = {"user", "feedback"}
 
-MEM0_CONFIG = {
-    "vector_store": {
-        "provider": "chroma",
-        "config": {
-            "collection_name": "brain",
-            "path": str(GLOBAL_VECTOR),
+_MACHINE_CONFIG_PATH = GLOBAL_RAW / "machine_config.yaml"
+_FALLBACK_LLM = "qwen2.5:0.5b"
+_FALLBACK_EMBED = "nomic-embed-text"
+
+
+def _load_machine_models() -> tuple[str, str]:
+    """Read machine_config.yaml and return (llm_model, embed_model) for this hostname."""
+    hostname = os.uname().nodename
+    try:
+        import yaml
+        data = yaml.safe_load(_MACHINE_CONFIG_PATH.read_text())
+        machines = data.get("machines", {})
+        entry = machines.get(hostname) or machines.get("_default") or {}
+        return entry.get("llm_model", _FALLBACK_LLM), entry.get("embed_model", _FALLBACK_EMBED)
+    except Exception:
+        return _FALLBACK_LLM, _FALLBACK_EMBED
+
+
+def _build_mem0_config() -> dict:
+    llm_model, embed_model = _load_machine_models()
+    if llm_model.startswith("claude-"):
+        llm_block = {
+            "provider": "anthropic",
+            "config": {"model": llm_model, "temperature": 0, "max_tokens": 2000},
+        }
+    else:
+        llm_block = {
+            "provider": "ollama",
+            "config": {"model": llm_model, "ollama_base_url": "http://localhost:11434"},
+        }
+    return {
+        "vector_store": {
+            "provider": "chroma",
+            "config": {"collection_name": "brain", "path": str(GLOBAL_VECTOR)},
         },
-    },
-    "embedder": {
-        "provider": "ollama",
-        "config": {
-            "model": "nomic-embed-text",
-            "ollama_base_url": "http://localhost:11434",
+        "embedder": {
+            "provider": "ollama",
+            "config": {"model": embed_model, "ollama_base_url": "http://localhost:11434"},
         },
-    },
-    "llm": {
-        "provider": "anthropic",
-        "config": {
-            "model": "claude-haiku-4-5-20251001",
-            "temperature": 0,
-            "max_tokens": 2000,
-        },
-    },
-    "history_db_path": str(BRAIN_DIR / "mem0_history.db"),
-    "version": "v1.1",
-}
+        "llm": llm_block,
+        "history_db_path": str(BRAIN_DIR / "mem0_history.db"),
+        "version": "v1.1",
+    }
+
+
+MEM0_CONFIG = _build_mem0_config()
 
 
 def repo_brain(cwd: str | pathlib.Path) -> pathlib.Path:
